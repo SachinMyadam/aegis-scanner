@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from typing import List
 
 from .models import ScanRequest, ScanResult, ExternalReport, HeuristicResult, SandboxReport, Verdict
-from .sandbox_manager import run_sandbox_scan as run_isolated_scan
+# from .sandbox_manager import run_sandbox_scan as run_isolated_scan
 from .email_manager import EmailManager
 
 OFFICIAL_AI_DOMAINS = {
@@ -20,6 +20,10 @@ OFFICIAL_AI_DOMAINS = {
     "sora": "openai.com",
     "claude": "anthropic.com",
     "jasper": "jasper.ai",
+    "google": "google.com",
+    "youtube": "youtube.com",
+    "github": "github.com",
+    "microsoft": "microsoft.com"
 }
 
 class ThreatAggregationEngine:
@@ -33,27 +37,24 @@ class ThreatAggregationEngine:
         url = str(scan_request.url)
         result = await self._perform_full_url_scan(url)
         
-        # Trigger Email Alert if Malicious
+        # Alert if Malicious
         if result.final_verdict == "Malicious":
             self.email_manager.send_alert(result)
             
         return result
 
     async def scan_file(self, file_bytes: bytes, filename: str) -> ScanResult:
-        # 1. Hash Check
         sha256_hash = hashlib.sha256(file_bytes).hexdigest()
         risk_score = 0
         heuristic_results = []
         external_reports = []
         
-        # 2. VT Hash Lookup
         vt_report = await self._query_virustotal_hash(sha256_hash)
         external_reports.append(vt_report)
         risk_score += self._calculate_vt_score(vt_report)
         
         heuristic_results.append(HeuristicResult(name="File Hash Analysis", is_triggered=True, score_change=0, description=f"SHA256: {sha256_hash}"))
 
-        # 3. PDF Deep Scan
         if filename.lower().endswith(".pdf"):
             pdf_score, pdf_heuristics = await self._analyze_pdf_content(file_bytes)
             risk_score += pdf_score
@@ -72,7 +73,6 @@ class ThreatAggregationEngine:
             sandbox_report=SandboxReport(status="skipped", screenshot_path="")
         )
         
-        # Trigger Email Alert if Malicious
         if result.final_verdict == "Malicious":
             self.email_manager.send_alert(result)
             
@@ -90,13 +90,22 @@ class ThreatAggregationEngine:
             return self._build_safe_result(url, is_whitelisted=True)
             
         domain = urlparse(url).netloc
+        
+        # 1. Run Typosquatting (AI Brands)
         heuristic_results.extend(await self._run_domain_heuristics(domain))
         
+        # 2. Run Aggressive Keyword Check (Piracy/Scams)
+        keyword_score, keyword_heuristics = await self._check_aggressive_keywords(domain)
+        risk_score += keyword_score
+        heuristic_results.extend(keyword_heuristics)
+        
+        # 3. Check VirusTotal
         vt_report = await self._query_virustotal(url)
         external_reports.append(vt_report)
         risk_score += self._calculate_vt_score(vt_report)
             
-        sandbox_report = await run_isolated_scan(url)
+        # Sandbox Disabled for Cloud Speed
+        sandbox_report = SandboxReport(status="skipped", screenshot_path="", dom_hash="Lite Mode")
         
         final_score = min(max(risk_score, 0), self.max_risk_score)
         final_verdict = self._determine_verdict(final_score, external_reports)
@@ -110,6 +119,33 @@ class ThreatAggregationEngine:
             external_reports=external_reports,
             sandbox_report=sandbox_report
         )
+
+    async def _check_aggressive_keywords(self, domain: str):
+        """Checks for generic bad words often found in piracy/scams."""
+        score = 0
+        results = []
+        
+        domain_lower = domain.lower()
+        
+        # List of suspicious keywords
+        bad_keywords = [
+            "ibomma", "tamil", "movie", "stream", "free-download", 
+            "crack", "hack", "cheat", "betting", "casino", 
+            "login-update", "verify-account", "secure-login"
+        ]
+        
+        found_words = [word for word in bad_keywords if word in domain_lower]
+        
+        if found_words:
+            score += 40 # High penalty for suspicious words
+            results.append(HeuristicResult(
+                name="Aggressive Keyword Scan", 
+                is_triggered=True, 
+                score_change=40, 
+                description=f"Domain contains high-risk keywords: {', '.join(found_words)}"
+            ))
+        
+        return score, results
 
     async def _analyze_pdf_content(self, file_bytes):
         score = 0
@@ -127,7 +163,7 @@ class ThreatAggregationEngine:
                 for link in urls[:3]:
                     vt_report = await self._query_virustotal(link)
                     if vt_report.data.get("malicious", 0) > 0:
-                        score += 75 # High sensitivity for PDF links
+                        score += 75
                         results.append(HeuristicResult(name="Malicious PDF Link", is_triggered=True, score_change=75, description=f"Embedded URL flagged: {link}"))
             else:
                 results.append(HeuristicResult(name="PDF Structure", is_triggered=False, score_change=0, description="No embedded links found."))
@@ -149,7 +185,10 @@ class ThreatAggregationEngine:
             domain = urlparse(url).netloc
             extracted = tldextract.extract(domain)
             domain_root = f"{extracted.domain}.{extracted.suffix}"
-            return (True, "Safe") if domain_root in OFFICIAL_AI_DOMAINS.values() else (False, "Suspicious")
+            # Check strict whitelist
+            if domain_root in OFFICIAL_AI_DOMAINS.values():
+                return True, "Safe"
+            return False, "Suspicious"
         except: return (False, "Suspicious")
 
     async def _run_domain_heuristics(self, domain: str) -> List[HeuristicResult]:
@@ -201,7 +240,10 @@ class ThreatAggregationEngine:
 
     def _determine_verdict(self, score: int, external: List) -> Verdict:
         for r in external:
+            # Immediate Fail if VirusTotal says bad
             if r.source == "VirusTotal" and r.data.get("malicious", 0) >= 1: return "Malicious"
-        if score >= 60: return "Malicious"
-        elif score >= 30: return "Suspicious"
+        
+        # Lowered threshold for Suspicious (from 30 to 20)
+        if score >= 50: return "Malicious"
+        elif score >= 20: return "Suspicious"
         return "Safe"
