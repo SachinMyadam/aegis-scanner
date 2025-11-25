@@ -10,7 +10,8 @@ from urllib.parse import urlparse
 from typing import List
 
 from .models import ScanRequest, ScanResult, ExternalReport, HeuristicResult, SandboxReport, Verdict
-# from .sandbox_manager import run_sandbox_scan as run_isolated_scan
+# Re-enable the Sandbox
+from .sandbox_manager import run_sandbox_scan as run_isolated_scan
 from .email_manager import EmailManager
 
 OFFICIAL_AI_DOMAINS = {
@@ -20,10 +21,6 @@ OFFICIAL_AI_DOMAINS = {
     "sora": "openai.com",
     "claude": "anthropic.com",
     "jasper": "jasper.ai",
-    "google": "google.com",
-    "youtube": "youtube.com",
-    "github": "github.com",
-    "microsoft": "microsoft.com"
 }
 
 class ThreatAggregationEngine:
@@ -37,7 +34,6 @@ class ThreatAggregationEngine:
         url = str(scan_request.url)
         result = await self._perform_full_url_scan(url)
         
-        # Alert if Malicious
         if result.final_verdict == "Malicious":
             self.email_manager.send_alert(result)
             
@@ -63,6 +59,7 @@ class ThreatAggregationEngine:
         final_score = min(max(risk_score, 0), self.max_risk_score)
         final_verdict = self._determine_verdict(final_score, external_reports)
         
+        # Files don't get screenshots, so we skip sandbox here
         result = ScanResult(
             input_url=f"File: {filename}",
             final_verdict=final_verdict,
@@ -90,22 +87,19 @@ class ThreatAggregationEngine:
             return self._build_safe_result(url, is_whitelisted=True)
             
         domain = urlparse(url).netloc
-        
-        # 1. Run Typosquatting (AI Brands)
         heuristic_results.extend(await self._run_domain_heuristics(domain))
         
-        # 2. Run Aggressive Keyword Check (Piracy/Scams)
+        # Run Aggressive Keyword Check
         keyword_score, keyword_heuristics = await self._check_aggressive_keywords(domain)
         risk_score += keyword_score
         heuristic_results.extend(keyword_heuristics)
         
-        # 3. Check VirusTotal
         vt_report = await self._query_virustotal(url)
         external_reports.append(vt_report)
         risk_score += self._calculate_vt_score(vt_report)
             
-        # Sandbox Disabled for Cloud Speed
-        sandbox_report = SandboxReport(status="skipped", screenshot_path="", dom_hash="Lite Mode")
+        # RESTORED: The Full Sandbox Scan (Screenshots enabled)
+        sandbox_report = await run_isolated_scan(url)
         
         final_score = min(max(risk_score, 0), self.max_risk_score)
         final_verdict = self._determine_verdict(final_score, external_reports)
@@ -121,30 +115,14 @@ class ThreatAggregationEngine:
         )
 
     async def _check_aggressive_keywords(self, domain: str):
-        """Checks for generic bad words often found in piracy/scams."""
         score = 0
         results = []
-        
         domain_lower = domain.lower()
-        
-        # List of suspicious keywords
-        bad_keywords = [
-            "ibomma", "tamil", "movie", "stream", "free-download", 
-            "crack", "hack", "cheat", "betting", "casino", 
-            "login-update", "verify-account", "secure-login"
-        ]
-        
+        bad_keywords = ["ibomma", "tamil", "movie", "stream", "free-download", "crack", "hack", "cheat", "betting", "casino"]
         found_words = [word for word in bad_keywords if word in domain_lower]
-        
         if found_words:
-            score += 40 # High penalty for suspicious words
-            results.append(HeuristicResult(
-                name="Aggressive Keyword Scan", 
-                is_triggered=True, 
-                score_change=40, 
-                description=f"Domain contains high-risk keywords: {', '.join(found_words)}"
-            ))
-        
+            score += 40 
+            results.append(HeuristicResult(name="Aggressive Keyword Scan", is_triggered=True, score_change=40, description=f"Risk keywords: {', '.join(found_words)}"))
         return score, results
 
     async def _analyze_pdf_content(self, file_bytes):
@@ -185,10 +163,7 @@ class ThreatAggregationEngine:
             domain = urlparse(url).netloc
             extracted = tldextract.extract(domain)
             domain_root = f"{extracted.domain}.{extracted.suffix}"
-            # Check strict whitelist
-            if domain_root in OFFICIAL_AI_DOMAINS.values():
-                return True, "Safe"
-            return False, "Suspicious"
+            return (True, "Safe") if domain_root in OFFICIAL_AI_DOMAINS.values() else (False, "Suspicious")
         except: return (False, "Suspicious")
 
     async def _run_domain_heuristics(self, domain: str) -> List[HeuristicResult]:
@@ -201,7 +176,6 @@ class ThreatAggregationEngine:
         score_change = 0
         domain_part = tldextract.extract(domain).domain.lower()
         suspicious_keywords = ["chatgpt", "chat-gpt", "openai", "open-ai", "midjourney", "gpt-4"]
-        
         if any(keyword in domain_part for keyword in suspicious_keywords):
             is_triggered = True
             score_change = 75
@@ -240,10 +214,7 @@ class ThreatAggregationEngine:
 
     def _determine_verdict(self, score: int, external: List) -> Verdict:
         for r in external:
-            # Immediate Fail if VirusTotal says bad
             if r.source == "VirusTotal" and r.data.get("malicious", 0) >= 1: return "Malicious"
-        
-        # Lowered threshold for Suspicious (from 30 to 20)
-        if score >= 50: return "Malicious"
-        elif score >= 20: return "Suspicious"
+        if score >= 60: return "Malicious"
+        elif score >= 30: return "Suspicious"
         return "Safe"
