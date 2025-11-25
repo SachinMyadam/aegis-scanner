@@ -11,6 +11,7 @@ from typing import List
 
 from .models import ScanRequest, ScanResult, ExternalReport, HeuristicResult, SandboxReport, Verdict
 from .sandbox_manager import run_sandbox_scan as run_isolated_scan
+from .email_manager import EmailManager
 
 OFFICIAL_AI_DOMAINS = {
     "chatgpt": "openai.com",
@@ -26,10 +27,17 @@ class ThreatAggregationEngine:
         self.max_risk_score = 100
         self.initial_risk_score = 0
         self.vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
+        self.email_manager = EmailManager()
         
     async def scan_url(self, scan_request: ScanRequest) -> ScanResult:
         url = str(scan_request.url)
-        return await self._perform_full_url_scan(url)
+        result = await self._perform_full_url_scan(url)
+        
+        # Trigger Email Alert if Malicious
+        if result.final_verdict == "Malicious":
+            self.email_manager.send_alert(result)
+            
+        return result
 
     async def scan_file(self, file_bytes: bytes, filename: str) -> ScanResult:
         # 1. Hash Check
@@ -45,7 +53,7 @@ class ThreatAggregationEngine:
         
         heuristic_results.append(HeuristicResult(name="File Hash Analysis", is_triggered=True, score_change=0, description=f"SHA256: {sha256_hash}"))
 
-        # 3. PDF Deep Scan (New Feature)
+        # 3. PDF Deep Scan
         if filename.lower().endswith(".pdf"):
             pdf_score, pdf_heuristics = await self._analyze_pdf_content(file_bytes)
             risk_score += pdf_score
@@ -54,7 +62,7 @@ class ThreatAggregationEngine:
         final_score = min(max(risk_score, 0), self.max_risk_score)
         final_verdict = self._determine_verdict(final_score, external_reports)
         
-        return ScanResult(
+        result = ScanResult(
             input_url=f"File: {filename}",
             final_verdict=final_verdict,
             risk_score=final_score,
@@ -63,6 +71,12 @@ class ThreatAggregationEngine:
             external_reports=external_reports,
             sandbox_report=SandboxReport(status="skipped", screenshot_path="")
         )
+        
+        # Trigger Email Alert if Malicious
+        if result.final_verdict == "Malicious":
+            self.email_manager.send_alert(result)
+            
+        return result
 
     # --- Internal Logic ---
 
@@ -98,7 +112,6 @@ class ThreatAggregationEngine:
         )
 
     async def _analyze_pdf_content(self, file_bytes):
-        """Extracts links from PDF and scans them."""
         score = 0
         results = []
         try:
@@ -107,18 +120,15 @@ class ThreatAggregationEngine:
             for page in reader.pages:
                 text_content += page.extract_text() + "\n"
             
-            # Find URLs in text
             urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text_content)
             
             if urls:
                 results.append(HeuristicResult(name="PDF Structure", is_triggered=True, score_change=0, description=f"Found {len(urls)} embedded links."))
-                
-                # Scan the first 3 links found
                 for link in urls[:3]:
                     vt_report = await self._query_virustotal(link)
                     if vt_report.data.get("malicious", 0) > 0:
-                        score += 50
-                        results.append(HeuristicResult(name="Malicious PDF Link", is_triggered=True, score_change=50, description=f"Embedded URL flagged: {link}"))
+                        score += 75 # High sensitivity for PDF links
+                        results.append(HeuristicResult(name="Malicious PDF Link", is_triggered=True, score_change=75, description=f"Embedded URL flagged: {link}"))
             else:
                 results.append(HeuristicResult(name="PDF Structure", is_triggered=False, score_change=0, description="No embedded links found."))
                 
