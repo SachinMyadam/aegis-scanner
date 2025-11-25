@@ -18,7 +18,7 @@ export default function ThreatScanner() {
 
   const fetchHistory = async () => {
     try {
-      const res = await axios.get("http://localhost:8000/api/v1/history");
+      const res = await axios.get("https://aegis-backend.onrender.com/api/v1/history");
       setHistory(res.data);
     } catch (err) { console.error("Failed to load history", err); }
   };
@@ -32,12 +32,12 @@ export default function ThreatScanner() {
     try {
       let response;
       if (mode === "url") {
-        response = await axios.post("http://localhost:8000/api/v1/scan/url", { url: input, client_ip: "127.0.0.1" });
+        response = await axios.post("https://aegis-backend.onrender.com/api/v1/scan/url", { url: input, client_ip: "127.0.0.1" });
       } else {
         if (!selectedFile) return;
         const formData = new FormData();
         formData.append("file", selectedFile);
-        response = await axios.post("http://localhost:8000/api/v1/scan/file", formData, {
+        response = await axios.post("https://aegis-backend.onrender.com/api/v1/scan/file", formData, {
             headers: { "Content-Type": "multipart/form-data" }
         });
       }
