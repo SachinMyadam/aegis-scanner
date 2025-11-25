@@ -15,7 +15,7 @@ export default function ThreatScanner() {
   const [error, setError] = useState("");
 
   // Use localhost for local testing
-  const API_BASE_URL = "http://localhost:8000";
+  const API_BASE_URL = "https://aegis-scanner.onrender.com";
 
   useEffect(() => { fetchHistory(); }, []);
 

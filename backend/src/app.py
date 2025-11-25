@@ -8,6 +8,7 @@ from .database import SessionLocal, init_db, ScanRecord
 init_db()
 app = FastAPI(title="Threat Intelligence API")
 
+# FIX: Allow ALL origins so Vercel can connect
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,7 +32,6 @@ async def scan_url(scan_request: ScanRequest, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/scan/file", response_model=ScanResult)
 async def scan_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """NEW Endpoint for File Scanning"""
     file_content = await file.read()
     result = await engine.scan_file(file_content, file.filename)
     _save_to_db(db, result)
