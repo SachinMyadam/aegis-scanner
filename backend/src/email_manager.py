@@ -1,32 +1,24 @@
-import smtplib
 import os
-from email.message import EmailMessage
+import requests
 from .models import ScanResult
 
 class EmailManager:
     def __init__(self):
-        self.smtp_server = "smtp.gmail.com"
-        self.smtp_port = 465
-        self.sender_email = os.getenv("SMTP_EMAIL")
-        self.sender_password = os.getenv("SMTP_PASSWORD")
+        # Use Resend API to bypass Render's SMTP port block
+        self.api_key = os.getenv("RESEND_API_KEY")
         self.recipient_email = os.getenv("ALERT_RECIPIENT_EMAIL")
+        self.api_url = "https://api.resend.com/emails"
 
     def send_alert(self, result: ScanResult):
-        # 1. Check Configuration
-        if not self.sender_email or not self.sender_password:
-            print("⚠️ Email alerts not configured. Skipping.")
+        if not self.api_key:
+            print("⚠️ Resend API Key missing. Skipping email.")
             return
 
-        # 2. Check Verdict
         if result.final_verdict != "Malicious":
             return
 
-        # 3. Build Email
-        msg = EmailMessage()
-        msg['Subject'] = f"🚨 AEGIS ALERT: Malicious Threat Detected ({result.risk_score}/100)"
-        msg['From'] = self.sender_email
-        msg['To'] = self.recipient_email
-
+        subject = f"🚨 AEGIS ALERT: Malicious Threat Detected ({result.risk_score}/100)"
+        
         body = f"""
         ⚠️ High Risk Threat Detected!
         
@@ -42,18 +34,24 @@ class EmailManager:
                 malicious = report.data.get('malicious', 0)
                 body += f"\nVirusTotal Detections: {malicious}"
 
-        msg.set_content(body)
+        # Resend API Payload
+        payload = {
+            "from": "onboarding@resend.dev",
+            "to": [self.recipient_email],
+            "subject": subject,
+            "text": body
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
 
-        # 4. Send with Error Handling
         try:
-            with smtplib.SMTP_SSL(self.smtp_server, self.smtp_port) as server:
-                server.login(self.sender_email, self.sender_password)
-                server.send_message(msg)
-            print(f"✅ Alert email sent to {self.recipient_email}")
-        except OSError as e:
-            if e.errno == 101:
-                print(f"ℹ️ Email skipped: Render Free Tier blocks SMTP ports (Standard behavior).")
+            response = requests.post(self.api_url, json=payload, headers=headers)
+            if response.ok:
+                print(f"✅ Alert email sent via Resend to {self.recipient_email}")
             else:
-                print(f"❌ Failed to send email alert: {str(e)}")
+                print(f"❌ Resend API Error: {response.text}")
         except Exception as e:
-            print(f"❌ Failed to send email alert: {str(e)}")
+            print(f"❌ Connection Error: {str(e)}")
