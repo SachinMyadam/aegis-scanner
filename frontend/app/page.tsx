@@ -14,11 +14,14 @@ export default function ThreatScanner() {
   const [history, setHistory] = useState<any[]>([]);
   const [error, setError] = useState("");
 
+  // Use localhost for local testing
+  const API_BASE_URL = "http://localhost:8000";
+
   useEffect(() => { fetchHistory(); }, []);
 
   const fetchHistory = async () => {
     try {
-      const res = await axios.get("https://aegis-backend.onrender.com/api/v1/history");
+      const res = await axios.get(`${API_BASE_URL}/api/v1/history`);
       setHistory(res.data);
     } catch (err) { console.error("Failed to load history", err); }
   };
@@ -32,12 +35,12 @@ export default function ThreatScanner() {
     try {
       let response;
       if (mode === "url") {
-        response = await axios.post("https://aegis-backend.onrender.com/api/v1/scan/url", { url: input, client_ip: "127.0.0.1" });
+        response = await axios.post(`${API_BASE_URL}/api/v1/scan/url`, { url: input, client_ip: "127.0.0.1" });
       } else {
         if (!selectedFile) return;
         const formData = new FormData();
         formData.append("file", selectedFile);
-        response = await axios.post("https://aegis-backend.onrender.com/api/v1/scan/file", formData, {
+        response = await axios.post(`${API_BASE_URL}/api/v1/scan/file`, formData, {
             headers: { "Content-Type": "multipart/form-data" }
         });
       }
@@ -63,7 +66,7 @@ export default function ThreatScanner() {
         <div className="flex items-center space-x-4 border-b border-gray-800 pb-6">
           <Shield className="w-12 h-12 text-blue-500" />
           <div>
-            <h1 className="text-3xl font-bold text-white tracking-wider">AEGIS SCANNER V2</h1>
+            <h1 className="text-3xl font-bold text-white tracking-wider">AEGIS SCANNER V3</h1>
             <p className="text-gray-500">Multi-Vector Threat Intelligence (URL & File)</p>
           </div>
         </div>
