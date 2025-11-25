@@ -6,13 +6,13 @@ from .models import ScanResult
 class EmailManager:
     def __init__(self):
         self.smtp_server = "smtp.gmail.com"
-        self.smtp_port = 587
+        # FIX: Switch to Port 465 (SSL) which is more reliable in Cloud
+        self.smtp_port = 465
         self.sender_email = os.getenv("SMTP_EMAIL")
         self.sender_password = os.getenv("SMTP_PASSWORD")
         self.recipient_email = os.getenv("ALERT_RECIPIENT_EMAIL")
 
     def send_alert(self, result: ScanResult):
-        # Only send if configured and result is Malicious
         if not self.sender_email or not self.sender_password:
             print("Email alerts not configured. Skipping.")
             return
@@ -25,7 +25,6 @@ class EmailManager:
         msg['From'] = self.sender_email
         msg['To'] = self.recipient_email
 
-        # Build the email body
         body = f"""
         ⚠️ High Risk Threat Detected!
         
@@ -36,13 +35,11 @@ class EmailManager:
         --- Intelligence Summary ---
         """
         
-        # Add VT details
         for report in result.external_reports:
             if report.source == "VirusTotal":
                 malicious = report.data.get('malicious', 0)
                 body += f"\nVirusTotal Detections: {malicious}"
 
-        # Add Heuristics
         body += "\n\n--- Heuristics Triggered ---"
         for heuristic in result.heuristic_results:
             if heuristic.is_triggered:
@@ -51,8 +48,8 @@ class EmailManager:
         msg.set_content(body)
 
         try:
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls()
+            # FIX: Use SMTP_SSL directly (No starttls needed)
+            with smtplib.SMTP_SSL(self.smtp_server, self.smtp_port) as server:
                 server.login(self.sender_email, self.sender_password)
                 server.send_message(msg)
             print(f"✅ Alert email sent to {self.recipient_email}")
