@@ -1,4 +1,11 @@
 import os
+
+# 1. Add pypdf to requirements
+with open("backend/requirements.txt", "a") as f:
+    f.write("\npypdf==3.17.1")
+
+# 2. Overwrite engine.py with PDF Logic
+engine_code = r'''import os
 import base64
 import httpx
 import hashlib
@@ -195,3 +202,8 @@ class ThreatAggregationEngine:
         if score >= 60: return "Malicious"
         elif score >= 30: return "Suspicious"
         return "Safe"
+'''
+with open("backend/src/engine.py", "w") as f:
+    f.write(engine_code)
+
+print("Engine V3 (PDF Support) Ready.")

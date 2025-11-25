@@ -1,18 +1,13 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import List
-
 from .models import ScanRequest, ScanResult
 from .engine import ThreatAggregationEngine
 from .database import SessionLocal, init_db, ScanRecord
 
-# Initialize Database Tables
 init_db()
-
 app = FastAPI(title="Threat Intelligence API")
 
-# Allow Frontend Connection
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,20 +18,26 @@ app.add_middleware(
 
 engine = ThreatAggregationEngine()
 
-# Dependency to get DB session
 def get_db():
     db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    try: yield db
+    finally: db.close()
 
 @app.post("/api/v1/scan/url", response_model=ScanResult)
 async def scan_url(scan_request: ScanRequest, db: Session = Depends(get_db)):
-    # 1. Run the Scan
     result = await engine.scan_url(scan_request)
-    
-    # 2. Save to Database
+    _save_to_db(db, result)
+    return result
+
+@app.post("/api/v1/scan/file", response_model=ScanResult)
+async def scan_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """NEW Endpoint for File Scanning"""
+    file_content = await file.read()
+    result = await engine.scan_file(file_content, file.filename)
+    _save_to_db(db, result)
+    return result
+
+def _save_to_db(db, result):
     db_record = ScanRecord(
         url=result.input_url,
         verdict=result.final_verdict,
@@ -47,12 +48,7 @@ async def scan_url(scan_request: ScanRequest, db: Session = Depends(get_db)):
     )
     db.add(db_record)
     db.commit()
-    db.refresh(db_record)
-    
-    return result
 
 @app.get("/api/v1/history")
 async def get_history(limit: int = 10, db: Session = Depends(get_db)):
-    """Fetch the last 10 scans."""
-    scans = db.query(ScanRecord).order_by(ScanRecord.id.desc()).limit(limit).all()
-    return scans
+    return db.query(ScanRecord).order_by(ScanRecord.id.desc()).limit(limit).all()

@@ -10,7 +10,6 @@ class ScanRequest(BaseModel):
 
 # --- Result Models ---
 
-# Represents the final verdict of the scan
 Verdict = Literal["Safe", "Suspicious", "Malicious"]
 
 class HeuristicResult(BaseModel):
@@ -28,8 +27,9 @@ class ExternalReport(BaseModel):
 
 class SandboxReport(BaseModel):
     """Data captured from the isolated headless browser scan."""
-    status: Literal["ok", "error"]
-    screenshot_path: str = "" # Path to storage location
+    # FIX: Added "skipped" to the allowed list below
+    status: Literal["ok", "error", "skipped"]
+    screenshot_path: str = "" 
     dom_hash: str = ""
     malicious_scripts_detected: bool = False
 
@@ -37,7 +37,7 @@ class ScanResult(BaseModel):
     """The complete response model for a URL scan."""
     input_url: str
     final_verdict: Verdict
-    risk_score: int # 0 (Safe) to 100 (Malicious)
+    risk_score: int 
     is_whitelisted: bool
     
     # Detailed Reports
