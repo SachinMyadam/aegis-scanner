@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from typing import List
 
 from .models import ScanRequest, ScanResult, ExternalReport, HeuristicResult, SandboxReport, Verdict
-# Sandbox enabled for full features
+# Enable Sandbox
 from .sandbox_manager import run_sandbox_scan as run_isolated_scan
 from .email_manager import EmailManager
 
@@ -62,7 +62,6 @@ class ThreatAggregationEngine:
         final_score = min(max(risk_score, 0), self.max_risk_score)
         final_verdict = self._determine_verdict(final_score, external_reports)
         
-        # Files don't get screenshots
         result = ScanResult(
             input_url=f"File: {filename}",
             final_verdict=final_verdict,
@@ -91,13 +90,13 @@ class ThreatAggregationEngine:
             
         domain = urlparse(url).netloc
         
-        # 1. Run Typosquatting (AI Brands) - FIX APPLIED HERE
+        # 1. Typosquatting Check (FIXED: Now actually adds the score)
         typo_results = await self._run_domain_heuristics(domain)
         for res in typo_results:
-            risk_score += res.score_change  # <--- This was missing!
+            risk_score += res.score_change
         heuristic_results.extend(typo_results)
         
-        # 2. Run Aggressive Keyword Check (Piracy/Scams)
+        # 2. Aggressive Keyword Check
         keyword_score, keyword_heuristics = await self._check_aggressive_keywords(domain)
         risk_score += keyword_score
         heuristic_results.extend(keyword_heuristics)
@@ -107,7 +106,7 @@ class ThreatAggregationEngine:
         external_reports.append(vt_report)
         risk_score += self._calculate_vt_score(vt_report)
             
-        # 4. Sandbox (Full Version)
+        # 4. Sandbox
         sandbox_report = await run_isolated_scan(url)
         
         final_score = min(max(risk_score, 0), self.max_risk_score)
@@ -142,7 +141,9 @@ class ThreatAggregationEngine:
             text_content = ""
             for page in reader.pages:
                 text_content += page.extract_text() + "\n"
+            
             urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text_content)
+            
             if urls:
                 results.append(HeuristicResult(name="PDF Structure", is_triggered=True, score_change=0, description=f"Found {len(urls)} embedded links."))
                 for link in urls[:3]:
@@ -152,9 +153,11 @@ class ThreatAggregationEngine:
                         results.append(HeuristicResult(name="Malicious PDF Link", is_triggered=True, score_change=75, description=f"Embedded URL flagged: {link}"))
             else:
                 results.append(HeuristicResult(name="PDF Structure", is_triggered=False, score_change=0, description="No embedded links found."))
+                
         except Exception as e:
             results.append(HeuristicResult(name="PDF Analysis", is_triggered=True, score_change=20, description=f"Failed to parse PDF: {str(e)}"))
             score += 20
+            
         return score, results
 
     def _build_safe_result(self, url, is_whitelisted=False):
@@ -181,6 +184,7 @@ class ThreatAggregationEngine:
         score_change = 0
         domain_part = tldextract.extract(domain).domain.lower()
         suspicious_keywords = ["chatgpt", "chat-gpt", "openai", "open-ai", "midjourney", "gpt-4"]
+        
         if any(keyword in domain_part for keyword in suspicious_keywords):
             is_triggered = True
             score_change = 75
@@ -220,6 +224,6 @@ class ThreatAggregationEngine:
     def _determine_verdict(self, score: int, external: List) -> Verdict:
         for r in external:
             if r.source == "VirusTotal" and r.data.get("malicious", 0) >= 1: return "Malicious"
-        if score >= 60: return "Malicious"
+        if score >= 50: return "Malicious"
         elif score >= 20: return "Suspicious"
         return "Safe"
