@@ -10,8 +10,8 @@ from urllib.parse import urlparse
 from typing import List
 
 from .models import ScanRequest, ScanResult, ExternalReport, HeuristicResult, SandboxReport, Verdict
-# Sandbox disabled to prevent OOM crashes on Free Tier
-# from .sandbox_manager import run_sandbox_scan as run_isolated_scan
+# Sandbox enabled for full features
+from .sandbox_manager import run_sandbox_scan as run_isolated_scan
 from .email_manager import EmailManager
 
 OFFICIAL_AI_DOMAINS = {
@@ -37,7 +37,6 @@ class ThreatAggregationEngine:
         url = str(scan_request.url)
         result = await self._perform_full_url_scan(url)
         
-        # Alert if Malicious
         if result.final_verdict == "Malicious":
             self.email_manager.send_alert(result)
             
@@ -63,6 +62,7 @@ class ThreatAggregationEngine:
         final_score = min(max(risk_score, 0), self.max_risk_score)
         final_verdict = self._determine_verdict(final_score, external_reports)
         
+        # Files don't get screenshots
         result = ScanResult(
             input_url=f"File: {filename}",
             final_verdict=final_verdict,
@@ -91,17 +91,24 @@ class ThreatAggregationEngine:
             
         domain = urlparse(url).netloc
         
-        heuristic_results.extend(await self._run_domain_heuristics(domain))
+        # 1. Run Typosquatting (AI Brands) - FIX APPLIED HERE
+        typo_results = await self._run_domain_heuristics(domain)
+        for res in typo_results:
+            risk_score += res.score_change  # <--- This was missing!
+        heuristic_results.extend(typo_results)
+        
+        # 2. Run Aggressive Keyword Check (Piracy/Scams)
         keyword_score, keyword_heuristics = await self._check_aggressive_keywords(domain)
         risk_score += keyword_score
         heuristic_results.extend(keyword_heuristics)
         
+        # 3. VirusTotal
         vt_report = await self._query_virustotal(url)
         external_reports.append(vt_report)
         risk_score += self._calculate_vt_score(vt_report)
             
-        # LITE MODE: No Screenshot = No Crash
-        sandbox_report = SandboxReport(status="skipped", screenshot_path="", dom_hash="Lite Mode")
+        # 4. Sandbox (Full Version)
+        sandbox_report = await run_isolated_scan(url)
         
         final_score = min(max(risk_score, 0), self.max_risk_score)
         final_verdict = self._determine_verdict(final_score, external_reports)
@@ -213,6 +220,6 @@ class ThreatAggregationEngine:
     def _determine_verdict(self, score: int, external: List) -> Verdict:
         for r in external:
             if r.source == "VirusTotal" and r.data.get("malicious", 0) >= 1: return "Malicious"
-        if score >= 50: return "Malicious"
+        if score >= 60: return "Malicious"
         elif score >= 20: return "Suspicious"
         return "Safe"
